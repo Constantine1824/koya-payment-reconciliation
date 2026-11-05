@@ -5,16 +5,40 @@ Reads payments.jsonl and works out how much money we actually collected.
 Run:  python3 reconcile.py
 """
 import json
+from datetime import datetime
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
+from json.decoder import JSONDecodeError
 
-total = 0.0
+latest = {}
+
+with open("payments.jsonl", encoding="utf-8") as f:
+    for order, line in enumerate(f):
+        try:
+            event = json.loads(line)
+        except JSONDecodeError:
+            continue
+
+        txn_id = event.get("txn_id")
+        if not txn_id:
+            continue
+
+        try:
+            ts = datetime.fromisoformat(event["ts"].replace("Z", "+00:00"))
+            amount = Decimal(str(event["amount"]).replace(",", ""))
+            status = event["status"]
+        except (KeyError, TypeError, ValueError, InvalidOperation):
+            continue
+
+        previous = latest.get(txn_id)
+        if previous is None or (ts, order) >= (previous[0], previous[1]):
+            latest[txn_id] = (ts, order, status, amount)
+
+total = Decimal(0)
 count = 0
-
-with open("payments.jsonl") as f:
-    for line in f:
-        event = json.loads(line)
-        if event["status"] == "success":
-            total += float(event["amount"])
-            count += 1
+for _, _, status, amount in latest.values():
+    if status == "success":
+        total += amount
+        count += 1
 
 with open("expected.txt") as f:
     expected = int(f.read().strip())
@@ -24,4 +48,4 @@ if count != expected:
     print("Something in the data isn't being handled the way the README describes.")
 else:
     print(f"Check passed: {count} successful payments.")
-    print(f"Your code: KOYA-{round(total)}")
+    print(f"Your code: KOYA-{total.quantize(Decimal('1'), rounding=ROUND_HALF_UP)}")
